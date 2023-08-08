@@ -3,6 +3,7 @@ package pool
 import (
 	"fmt"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,54 +11,57 @@ import (
 )
 
 var upgrader = websocket.Upgrader{}
+var once sync.Once
 
 func newTestWebSocketPool() *Pool {
 	return DefaultPool("ws://localhost:8080/ws")
 }
 
 func TestWebSocketServer(t *testing.T) {
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		// Set up WebSocket connection
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			t.Fatalf("Failed to upgrade WebSocket connection: %v", err)
-		}
-		defer conn.Close()
-
-		// Simple echo server behavior
-		for {
-			msgType, msg, err := conn.ReadMessage()
+	once.Do(func() {
+		http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+			// Set up WebSocket connection
+			conn, err := upgrader.Upgrade(w, r, nil)
 			if err != nil {
-				break
+				t.Fatalf("Failed to upgrade WebSocket connection: %v", err)
 			}
-
-			// Respond with a Pong message to keep the connection alive
-			if msgType == websocket.PingMessage {
-				conn.WriteMessage(websocket.PongMessage, nil)
-				continue
+			defer conn.Close()
+	
+			// Simple echo server behavior
+			for {
+				msgType, msg, err := conn.ReadMessage()
+				if err != nil {
+					break
+				}
+	
+				// Respond with a Pong message to keep the connection alive
+				if msgType == websocket.PingMessage {
+					conn.WriteMessage(websocket.PongMessage, nil)
+					continue
+				}
+	
+				// Echo the received message back to the client
+				conn.WriteMessage(msgType, msg)
 			}
-
-			// Echo the received message back to the client
-			conn.WriteMessage(msgType, msg)
-		}
+		})
+	
+		// Start the test WebSocket server in a goroutine
+		go func() {
+			err := http.ListenAndServe(":8080", nil)
+			if err != nil {
+				panic(fmt.Sprintf("Failed to start test WebSocket server: %v", err))
+			}
+		}()
+	
+		// Wait for the test WebSocket server to start
+		time.Sleep(time.Second)
 	})
-
-	// Start the test WebSocket server in a goroutine
-	go func() {
-		err := http.ListenAndServe(":8080", nil)
-		if err != nil {
-			panic(fmt.Sprintf("Failed to start test WebSocket server: %v", err))
-		}
-	}()
-
-	// Wait for the test WebSocket server to start
-	time.Sleep(time.Second)
 }
 
 func TestConnectionPool(t *testing.T) {
 	TestWebSocketServer(t)
 	pool := newTestWebSocketPool()
-	defer pool.ReleaseAllConnections()
+	defer pool.Close()
 
 	for i := 0; i < int(pool.capacity); i++ {
 		conn, err := pool.GetConnection()
@@ -107,8 +111,12 @@ func TestClose(t *testing.T) {
 	TestWebSocketServer(t)
 	pool := newTestWebSocketPool()
 
+	if pool.numActive != 0 {
+		t.Errorf("Expected 0 active connection, but got: %d", pool.numActive)
+	}
+
 	// Acquire a connection and check the active count
-	_, err := pool.GetConnection()
+	conn, err := pool.GetConnection()
 	if err != nil {
 		t.Errorf("Failed to acquire connection: %v", err)
 	}
@@ -118,7 +126,7 @@ func TestClose(t *testing.T) {
 	}
 
 	// Close the pool and check if the connection is closed
-	pool.ReleaseAllConnections()
+	pool.ReleaseConnection(conn)
 
 	if pool.numActive != 0 {
 		t.Errorf("Expected 0 active connection after closing, but got: %d", pool.numActive)
