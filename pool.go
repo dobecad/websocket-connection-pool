@@ -16,6 +16,8 @@ type Pool struct {
 	capacity        uint32
 	createConn      func(string) (*websocket.Conn, error)
 	maxConnLifetime time.Duration
+	pingInterval    time.Duration
+	done            chan struct{}
 }
 
 type PoolConfig struct {
@@ -23,7 +25,12 @@ type PoolConfig struct {
 	capacity        uint32
 	createConn      func(string) (*websocket.Conn, error)
 	maxConnLifetime time.Duration
+	pingInterval    time.Duration
 }
+
+const (
+	DefaultPingInterval = 30 * time.Second
+)
 
 var (
 	ErrAllConnectionsAcquired = errors.New("all connections have been acquired")
@@ -34,8 +41,7 @@ func NewPool(wsUrl string, config *PoolConfig) *Pool {
 	pool.maxConnLifetime = config.maxConnLifetime
 	pool.capacity = config.capacity
 	pool.createConn = config.createConn
-
-	// pool.initializeConnections()
+	pool.pingInterval = config.pingInterval
 	return pool
 }
 
@@ -45,6 +51,8 @@ func DefaultPool(wsUrl string) *Pool {
 		maxConnLifetime: time.Minute * 5,
 		createConn:      defaultCreator,
 		wsUrl:           wsUrl,
+		pingInterval:    DefaultPingInterval,
+		done:            make(chan struct{}),
 	}
 }
 
@@ -106,17 +114,34 @@ func (p *Pool) ReleaseConnection(conn *websocket.Conn) {
 
 	p.connections = append(p.connections, conn)
 	p.numActive--
+	go p.keepConnectionAlive(conn)
 }
 
-func (p *Pool) ReleaseAllConnections() {
-	for _, conn := range p.connections {
-		p.ReleaseConnection(conn)
+func (pool *Pool) keepConnectionAlive(conn *websocket.Conn) {
+	ticker := time.NewTicker(pool.pingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			// Send a Ping message to keep the connection alive
+			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				// If the Ping fails, assume the connection is broken and close it
+				conn.Close()
+				return
+			}
+		case <-pool.done:
+			return
+		}
 	}
 }
 
 func (p *Pool) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	// Stop the keepConnectionAlive routine for the connection
+	close(p.done)
 
 	for _, conn := range p.connections {
 		if err := conn.Close(); err != nil {
