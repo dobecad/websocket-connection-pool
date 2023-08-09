@@ -17,6 +17,29 @@ func newTestWebSocketPool() *Pool {
 	return DefaultPool("ws://localhost:8080/ws")
 }
 
+func TestNewWebSocketPool(t *testing.T) {
+	poolOpts := &PoolConfig {
+		Capacity: 5,
+		PingInterval: time.Minute,
+		CreateConn: func (wsUrl string) (*websocket.Conn, error) {
+			conn, _, err := websocket.DefaultDialer.Dial(wsUrl, nil)
+			if err != nil {
+				return nil, err
+			}
+			return conn, nil
+		},
+	}
+	pool := NewPool("ws://localhost:8080/ws", poolOpts)
+
+	if pool.capacity != 5 {
+		t.Fatalf("Pool capacity does not match config: %d vs %d", pool.capacity, poolOpts.Capacity)
+	}
+
+	if pool.pingInterval != time.Minute {
+		t.Fatalf("Pool pingInterval does not match config")
+	}
+}
+
 func TestWebSocketServer(t *testing.T) {
 	once.Do(func() {
 		http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {

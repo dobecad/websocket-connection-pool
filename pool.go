@@ -21,16 +21,16 @@ type Pool struct {
 
 type PoolConfig struct {
 	// Max number of connections to keep in the Pool. Minimum is 2 connections
-	capacity uint32
+	Capacity uint32
 
 	// Function for creating the websocket connection.
 	//
 	// Allows you to define how your websocket connection should be made
-	createConn func(string) (*websocket.Conn, error)
+	CreateConn func(string) (*websocket.Conn, error)
 
 	// How often your websocket should ping the server to
 	// keep the connection alive
-	pingInterval time.Duration
+	PingInterval time.Duration
 }
 
 const (
@@ -46,12 +46,12 @@ var (
 // Create a new Websocket Connection Pool
 func NewPool(wsUrl string, config *PoolConfig) *Pool {
 	pool := DefaultPool(wsUrl)
-	if config.capacity < MinCapacity {
-		config.capacity = MinCapacity
+	if config.Capacity < MinCapacity {
+		config.Capacity = MinCapacity
 	}
-	pool.capacity = config.capacity
-	pool.createConn = config.createConn
-	pool.pingInterval = config.pingInterval
+	pool.capacity = config.Capacity
+	pool.createConn = config.CreateConn
+	pool.pingInterval = config.PingInterval
 	return pool
 }
 
