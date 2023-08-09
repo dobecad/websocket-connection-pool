@@ -20,7 +20,7 @@ type Pool struct {
 }
 
 type PoolConfig struct {
-	// Max number of connections to keep in the Pool
+	// Max number of connections to keep in the Pool. Minimum is 2 connections
 	capacity uint32
 
 	// Function for creating the websocket connection.
