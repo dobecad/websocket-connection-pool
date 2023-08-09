@@ -9,53 +9,64 @@ import (
 )
 
 type Pool struct {
-	mu              sync.Mutex
-	wsUrl           string
-	connections     []*websocket.Conn
-	numActive       uint32
-	capacity        uint32
-	createConn      func(string) (*websocket.Conn, error)
-	maxConnLifetime time.Duration
-	pingInterval    time.Duration
-	done            chan struct{}
+	mu           sync.Mutex
+	wsUrl        string
+	connections  []*websocket.Conn
+	numActive    uint32
+	capacity     uint32
+	createConn   func(string) (*websocket.Conn, error)
+	pingInterval time.Duration
+	done         chan struct{}
 }
 
 type PoolConfig struct {
-	wsUrl           string
-	capacity        uint32
-	createConn      func(string) (*websocket.Conn, error)
-	maxConnLifetime time.Duration
-	pingInterval    time.Duration
+	// Max number of connections to keep in the Pool
+	capacity uint32
+
+	// Function for creating the websocket connection.
+	//
+	// Allows you to define how your websocket connection should be made
+	createConn func(string) (*websocket.Conn, error)
+
+	// How often your websocket should ping the server to
+	// keep the connection alive
+	pingInterval time.Duration
 }
 
 const (
 	DefaultPingInterval = 30 * time.Second
+	MinCapacity         = 2
+	DefaultCapacity     = 5
 )
 
 var (
 	ErrAllConnectionsAcquired = errors.New("all connections have been acquired")
 )
 
+// Create a new Websocket Connection Pool
 func NewPool(wsUrl string, config *PoolConfig) *Pool {
 	pool := DefaultPool(wsUrl)
-	pool.maxConnLifetime = config.maxConnLifetime
+	if config.capacity < MinCapacity {
+		config.capacity = MinCapacity
+	}
 	pool.capacity = config.capacity
 	pool.createConn = config.createConn
 	pool.pingInterval = config.pingInterval
 	return pool
 }
 
+// Create a new Websocket Connection Pool using default settings
 func DefaultPool(wsUrl string) *Pool {
 	return &Pool{
-		capacity:        5,
-		maxConnLifetime: time.Minute * 5,
-		createConn:      defaultCreator,
-		wsUrl:           wsUrl,
-		pingInterval:    DefaultPingInterval,
-		done:            make(chan struct{}),
+		capacity:     DefaultCapacity,
+		createConn:   defaultCreator,
+		wsUrl:        wsUrl,
+		pingInterval: DefaultPingInterval,
+		done:         make(chan struct{}),
 	}
 }
 
+// Create a simple WS connection
 func defaultCreator(wsUrl string) (*websocket.Conn, error) {
 	conn, _, err := websocket.DefaultDialer.Dial(wsUrl, nil)
 	if err != nil {
@@ -64,20 +75,7 @@ func defaultCreator(wsUrl string) (*websocket.Conn, error) {
 	return conn, nil
 }
 
-func (p *Pool) initializeConnections() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	for i := 0; i < int(p.capacity); i++ {
-		conn, err := p.createConn(p.wsUrl)
-		if err != nil {
-			return err
-		}
-		p.connections = append(p.connections, conn)
-	}
-	return nil
-}
-
+// Grab a connection from the Pool
 func (p *Pool) GetConnection() (*websocket.Conn, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -108,6 +106,7 @@ func (p *Pool) GetConnection() (*websocket.Conn, error) {
 	return conn, nil
 }
 
+// Release a connection so that it goes back to the Pool
 func (p *Pool) ReleaseConnection(conn *websocket.Conn) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -117,6 +116,7 @@ func (p *Pool) ReleaseConnection(conn *websocket.Conn) {
 	go p.keepConnectionAlive(conn)
 }
 
+// Pings the WS server to keep the connection alive
 func (pool *Pool) keepConnectionAlive(conn *websocket.Conn) {
 	ticker := time.NewTicker(pool.pingInterval)
 	defer ticker.Stop()
@@ -136,6 +136,7 @@ func (pool *Pool) keepConnectionAlive(conn *websocket.Conn) {
 	}
 }
 
+// Close all of the connections in the connection Pool
 func (p *Pool) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
