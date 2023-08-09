@@ -157,7 +157,7 @@ func TestConcurrentAccess(t *testing.T) {
 	// Concurrently release connections
 	for i := 0; i < numRelease; i++ {
 		go func() {
-			if len(conns) > 0 {
+			if len(conns) > 1 {
 				pool.ReleaseConnection(conns[0])
 				conns = conns[1:]
 			}
